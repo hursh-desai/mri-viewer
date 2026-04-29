@@ -1,36 +1,53 @@
 # MRI DICOM Viewer
 
-Local-first DICOM viewer for knee MRI studies. Fully offline — no data ever leaves your machine.
+Local-first DICOM viewer for knee MRI studies. Upload a ZIP of DICOM files, stream all slices instantly, and scrub offline.
 
-## Quick Start
+## Local Development
 
 ```bash
-cd /Users/hursh/Pictures/MRI/mri-viewer
-
-# Install (once)
+# Install dependencies (once)
 uv sync
 npm install
 
-# Run
+# Start backend + frontend together
 npm run dev
-# Opens http://localhost:5173
+# Frontend: http://localhost:5173
+# Backend:  http://localhost:8000
 ```
 
-The app automatically discovers the DICOM study at `../MR Knee WO -LEFT/` on startup.
+Upload a ZIP file containing DICOM series through the in-app picker. The backend streams decoded PNG slices over SSE as they're decoded; scrubbing is instant once a series is cached.
+
+## Deploy to Fly.io
+
+```bash
+# Install flyctl: https://fly.io/docs/hands-on/install-flyctl/
+
+# Log in (one-time)
+fly auth login
+
+# Create the app (change "mri-viewer" in fly.toml if the name is taken)
+fly apps create mri-viewer
+
+# Build and deploy
+fly deploy
+```
+
+The app will be live at `https://mri-viewer.fly.dev`. The VM auto-stops when idle and wakes on the next request — no charges for idle time on the free tier.
 
 ## Architecture
 
 ```
-Backend:  Python FastAPI (127.0.0.1:8000)
+Backend:  Python FastAPI
           - pydicom parses DICOM metadata
-          - pylibjpeg-libjpeg decodes JPEG Lossless pixels
-          - Numpy + Pillow converts to PNG with W/L applied
-          - DICOMDIR index for fast (~0.5s) cold start
+          - pylibjpeg decodes JPEG Lossless pixels
+          - Numpy + Pillow converts to windowed PNG
+          - SSE stream: one event per slice, base64-encoded PNG
 
 Frontend: Vite + React + TypeScript + Tailwind CSS
           - Canvas-based viewport (zoom, pan, W/L)
-          - Zustand state management
-          - Debounced W/L with CSS filter preview
+          - Zustand state — seriesImages blob URL cache
+          - Streams all series concurrently via EventSource
+          - Scrubbing is zero-latency array lookup after caching
 ```
 
 ## Controls
@@ -42,39 +59,22 @@ Frontend: Vite + React + TypeScript + Tailwind CSS
 | Window/Level | Right drag (horizontal = width, vertical = center) |
 | Zoom | Ctrl+wheel or `+`/`-` keys |
 | Reset view | Double-click or `R` |
-| Invert | `I` key or Invert button |
-| Cine play | `Space` or Cine button |
+| Invert | `I` key |
+| Cine play | `Space` |
 | Next/prev slice | Arrow keys |
-
-## Study Info
-
-- **5 series**: AX PD FS, AX T1, SAG PD FS, SAG PD, COR PD FS, COR PD, COR T2 ACL
-- **Transfer syntax**: JPEG Lossless (`1.2.840.10008.1.2.4.90`) — handled by pylibjpeg
-- **199 instances** across 7 series
-- PHI present — use the toggle in the header to hide patient details
+| Export all series | Export button in header |
 
 ## Features
 
-- Series picker with thumbnails and inferred labels (e.g. "Sagittal PD FS")
-- Plane inference from ImageOrientationPatient direction cosines
-- Sequence type inference from TR/TE and SeriesDescription
-- Spatial slice sorting via ImagePositionPatient dot-product
-- 4-tab metadata panel: Study / Series / Slice / Raw Tags
-- PHI toggle (hides patient name, ID, institution, physician)
-- Export: slice PNG, series stack ZIP, study/series/slice JSON
-- Drag-and-drop a new DICOM ZIP to switch studies
+- Upload any DICOM ZIP — no fixed study path
+- SSE streaming: first series viewable before others finish loading
+- Per-series progress bars during streaming
+- Series picker with plane and sequence inference (Sagittal PD FS, etc.)
+- Spatial slice sorting via ImagePositionPatient
+- Export: all series as a ZIP, one folder per series, one PNG per slice
+- W/L adjustment with CSS filter preview during drag
 
-## Limitations
+## Notes
 
-- JPEG Lossless only (transfer syntax 4.90). For other transfer syntaxes (JPEG 2000, RLE, etc.), additional pylibjpeg plugins may be needed.
-- Series inference labels are heuristic approximations — NOT medical classification.
-- No 3D MPR or volume rendering (future feature hook exists).
-
-## Notes on Metadata
-
-Tags particularly useful in this study:
-- `ImageOrientationPatient` — enables accurate plane detection
-- `ImagePositionPatient` — enables spatial slice ordering
-- `RepetitionTime` / `EchoTime` — enables T1/T2/PD inference
-- `WindowCenter` / `WindowWidth` — per-slice W/L recommendations
-- `PixelSpacing` + `SliceThickness` — voxel size display
+- Supports JPEG Lossless transfer syntax (`1.2.840.10008.1.2.4.90`). Other transfer syntaxes may require additional pylibjpeg plugins.
+- Series labels are heuristic — not for clinical use.
